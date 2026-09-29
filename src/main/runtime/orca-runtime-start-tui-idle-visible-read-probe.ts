@@ -9,10 +9,7 @@ import {
   VISIBLE_TERMINAL_SNAPSHOT_TIMEOUT_MS
 } from './orca-runtime-postlude'
 import { withTimeout } from './runtime-async-boundaries'
-import {
-  detectTerminalWaitBlockedReason,
-  isKnownReadyPromptBody
-} from './terminal-wait-detection'
+import { detectTerminalWaitBlockedReason, isKnownReadyPromptBody } from './terminal-wait-detection'
 import type {
   RuntimeTerminalWait,
   RuntimeTerminalWaitBlockedReason
@@ -38,6 +35,59 @@ export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWith
     waiterTimeoutMs: number,
     agent: TuiAgent | null
   ): void {
+    // Capture the exact surface before the provider read. A waiter handle can be rebound while
+    // the read is in flight, and a provider can respawn the same pty id under a new lifecycle.
+    // Applying that response to the replacement would turn an old screen into readiness.
+    let initialPty: ReturnType<typeof this.getLivePtyForHandle>
+    let initialLeaf: ReturnType<typeof this.getLiveLeafForHandle>['leaf'] | null = null
+    let initialHandleRecord: ReturnType<typeof this.getLiveLeafForHandle>['record'] | null = null
+    try {
+      initialPty = this.getLivePtyForHandle(waiter.handle)
+      if (!initialPty) {
+        const liveLeaf = this.getLiveLeafForHandle(waiter.handle)
+        initialHandleRecord = liveLeaf.record
+        initialLeaf = liveLeaf.leaf
+      } else {
+        initialHandleRecord = initialPty.record
+      }
+    } catch {
+      return
+    }
+    const ptyId = initialPty?.pty.ptyId ?? initialLeaf?.ptyId ?? null
+    if (!ptyId) {
+      return
+    }
+    const rendererGraphEpoch =
+      initialPty?.record.rendererGraphEpoch ?? initialHandleRecord?.rendererGraphEpoch ?? null
+    const ptyGeneration = initialPty?.record.ptyGeneration ?? initialLeaf?.ptyGeneration ?? null
+    const lifecycleGeneration = this.getPtyLifecycleGeneration(ptyId)
+    const outputSequenceAtStart = this.getPtyOutputSequence(ptyId)
+    const isCurrentProbe = (): boolean => {
+      try {
+        if (!this.terminalWaiters.get(waiter.handle)?.has(waiter)) {
+          return false
+        }
+        const currentPty = this.getLivePtyForHandle(waiter.handle)
+        const currentLeafRecord = currentPty ? null : this.getLiveLeafForHandle(waiter.handle)
+        const currentLeaf = currentLeafRecord?.leaf ?? null
+        const currentPtyId = currentPty?.pty.ptyId ?? currentLeaf?.ptyId ?? null
+        const currentRendererGraphEpoch =
+          currentPty?.record.rendererGraphEpoch ??
+          currentLeafRecord?.record.rendererGraphEpoch ??
+          null
+        const currentPtyGeneration =
+          currentPty?.record.ptyGeneration ?? currentLeaf?.ptyGeneration ?? null
+        return (
+          currentPtyId === ptyId &&
+          currentRendererGraphEpoch === rendererGraphEpoch &&
+          currentPtyGeneration === ptyGeneration &&
+          this.getPtyLifecycleGeneration(ptyId) === lifecycleGeneration &&
+          this.getPtyOutputSequence(ptyId) === outputSequenceAtStart
+        )
+      } catch {
+        return false
+      }
+    }
     const settleMarginMs = Math.min(
       TUI_IDLE_VISIBLE_PROBE_SETTLE_MARGIN_MS,
       Math.max(1, Math.floor(waiterTimeoutMs / 3))
@@ -65,11 +115,7 @@ export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWith
       null
     )
       .then((projection) => {
-        if (
-          !projection ||
-          projection.source !== 'screen' ||
-          !this.terminalWaiters.get(waiter.handle)?.has(waiter)
-        ) {
+        if (!projection || projection.source !== 'screen' || !isCurrentProbe()) {
           return
         }
         const snapshotText =
@@ -80,12 +126,7 @@ export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWith
         const ready =
           agent === 'antigravity'
             ? isAntigravityReadyPromptSnapshot(snapshotText)
-            : isKnownReadyPromptBody(
-                snapshotText,
-                agent,
-                () => projection.tail,
-                () => this.recentPtyOutputById.get(ptyId)?.read() ?? null
-              )
+            : isKnownReadyPromptBody(snapshotText, agent, () => projection.tail)
         if (!blockedReason && !ready) {
           return
         }

@@ -1,5 +1,4 @@
 import { isQoderComposerReady } from './qoder-terminal-readiness'
-import { createDraftPasteReadyScanner } from '../../shared/draft-paste-ready-scanner'
 import { memoizeTitleClassification } from '../../shared/terminal-title-classification-memo'
 import {
   detectAgentStatusFromTitle,
@@ -9,6 +8,13 @@ import {
 import type { RuntimeTerminalWaitBlockedReason } from '../../shared/runtime-types'
 import type { TuiAgent } from '../../shared/tui-agent'
 import { findAntigravityReadyPromptIndex } from './antigravity-terminal-readiness'
+import {
+  findCodexComposerScreenReadyPromptIndex,
+  findCodexReadyPromptIndex,
+  findCodexScreenReadyPromptIndex,
+  hasCodexActiveTurn,
+  hasCodexLoadingHeader
+} from './codex-terminal-readiness'
 import { startOfLastLines, startOfLastNonBlankLines } from './terminal-wait-tail-window'
 
 const EXPLICIT_IDLE_TITLE_RE = /(^|\s)(ready|idle|done)(\s|$|[.!?])/i
@@ -61,8 +67,7 @@ export function isKnownReadyPromptPreview(preview: string): boolean {
 export function isKnownReadyPromptBody(
   waitText: string,
   agent: TuiAgent | null,
-  readScreenLines: () => readonly string[] | null,
-  readRecentOutput: () => string | null = () => null
+  readScreenLines: () => readonly string[] | null
 ): boolean {
   if (agent === 'qoder') {
     return isQoderComposerReady(readScreenLines())
@@ -73,9 +78,16 @@ export function isKnownReadyPromptBody(
   }
   if (isKnownReadyPromptPreview(waitText)) {
     const screenLines = readScreenLines()
+    if (screenLines === null) {
+      return true
+    }
+    const screen = screenLines.join('\n').toLowerCase()
+    // A retained line-folded header is allowed to settle only when the live grid does not
+    // contradict it. In particular, a working turn below the header must win over scrollback.
     return (
-      screenLines === null ||
-      findActionableTerminalWaitBlockedSignal(screenLines.join('\n').toLowerCase()) === null
+      findActionableTerminalWaitBlockedSignal(screen) === null &&
+      !hasCodexActiveTurn(screen) &&
+      !hasCodexLoadingHeader(screen)
     )
   }
   // Why the agent gate: another agent's screen can merely mention "OpenAI Codex".
@@ -88,18 +100,14 @@ export function isKnownReadyPromptBody(
     findCodexScreenReadyPromptIndex(screen),
     findCodexComposerScreenReadyPromptIndex(screen)
   )
-  const screenReady =
-    screenLines !== null && isReadyPromptUnblocked(screen, screenReadyIndex)
-  const recentOutput = readRecentOutput()
-  const transcriptReady =
-    recentOutput !== null &&
-    createDraftPasteReadyScanner('codex-composer-prompt').observe(recentOutput).ready
-  if (!screenReady && !transcriptReady) {
-    return false
-  }
-  // Why: a current startup dialog must veto the positive marker, even when the dialog is only
-  // visible in the rendered screen and the retained line tail has already scrolled past it.
-  return screen.length === 0 || findActionableTerminalWaitBlockedSignal(screen) === null
+  // Why: only the rendered screen can establish that a 0.158 composer is current. The bounded
+  // raw PTY replay is session history and has no wait/epoch watermark, so it is never a positive
+  // readiness source here; otherwise a marker from an earlier wait can satisfy a later one.
+  return (
+    screenLines !== null &&
+    !hasCodexActiveTurn(screen) &&
+    isReadyPromptUnblocked(screen, screenReadyIndex)
+  )
 }
 
 function isReadyPromptUnblocked(normalized: string, readyIndex: number | null): boolean {
@@ -142,34 +150,11 @@ export function findActionableTerminalWaitBlockedSignal(
 function findDismissedStartupModalIndex(normalized: string): number | null {
   const indexes = [
     findCodexReadyPromptIndex(normalized),
-    findCodexComposerPromptIndex(normalized),
     findAntigravityReadyPromptIndex(normalized),
     findCursorActivePromptIndex(normalized),
     findMuseReadyPromptIndex(normalized)
   ].filter((index): index is number => index !== null)
   return indexes.length > 0 ? Math.max(...indexes) : null
-}
-
-function findCodexComposerPromptIndex(normalized: string): number | null {
-  const indexes = [
-    normalized.lastIndexOf('› ask codex to do anything'),
-    normalized.lastIndexOf('› ask a follow-up question')
-  ].filter((index): index is number => index !== -1)
-  return indexes.length > 0 ? Math.max(...indexes) : null
-}
-
-function findCodexComposerScreenReadyPromptIndex(normalized: string): number | null {
-  const promptIndex = findCodexComposerPromptIndex(normalized)
-  if (promptIndex === null) {
-    return null
-  }
-  const headerIndex = normalized.indexOf('openai codex')
-  if (headerIndex === -1) {
-    return promptIndex
-  }
-  const boxEnd = normalized.indexOf('╰', headerIndex)
-  const header = normalized.slice(headerIndex, boxEnd === -1 ? undefined : boxEnd)
-  return CODEX_HEADER_LOADING_RE.test(header) ? null : promptIndex
 }
 
 function latestPromptIndex(...indexes: (number | null)[]): number | null {
@@ -215,34 +200,6 @@ function findMuseReadyPromptIndex(normalized: string): number | null {
   }
   const segment = normalized.slice(headerIndex)
   return segment.includes('voice') && segment.includes('input') && segment.includes('❯')
-    ? headerIndex
-    : null
-}
-
-function findCodexReadyPromptIndex(normalized: string): number | null {
-  const headerIndex = normalized.lastIndexOf('openai codex')
-  if (headerIndex === -1) {
-    return null
-  }
-  const readySegment = normalized.slice(headerIndex)
-  // Why: Codex prints permissions only in YOLO mode; the stable ready header is OpenAI Codex + model + directory.
-  return readySegment.includes('model:') && readySegment.includes('directory:') ? headerIndex : null
-}
-
-const CODEX_HEADER_LOADING_RE = /(?:model|directory):\s+loading/
-
-// Why the header box only: chat below it can mention "OpenAI Codex" or `model: loading`.
-// Why `loading`: a header still loading is not ready; the screen must not add readiness early.
-function findCodexScreenReadyPromptIndex(screen: string): number | null {
-  const headerIndex = screen.indexOf('openai codex')
-  if (headerIndex === -1) {
-    return null
-  }
-  const boxEnd = screen.indexOf('╰', headerIndex)
-  const header = screen.slice(headerIndex, boxEnd === -1 ? undefined : boxEnd)
-  return header.includes('model:') &&
-    header.includes('directory:') &&
-    !CODEX_HEADER_LOADING_RE.test(header)
     ? headerIndex
     : null
 }
