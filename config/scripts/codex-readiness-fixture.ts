@@ -40,6 +40,11 @@ const userQuotedComposerScreen = [
   ...readyScreen.slice(0, 5),
   'User quoted: › Ask Codex to do anything'
 ]
+const historicalComposerMentionScreen = [
+  ...readyScreen.slice(0, 5),
+  '› Earlier answer mentioned › Ask Codex to do anything',
+  '› Ask Codex to do anything'
+]
 const staleHeaderBannerlessComposerScreen = [
   'OpenAI Codex (v0.158)',
   'model: GPT-6',
@@ -140,6 +145,11 @@ assertReadiness(
   'user-quoted-composer-after-header',
   isKnownReadyPromptBody('', 'codex', () => userQuotedComposerScreen),
   false
+)
+assertReadiness(
+  'historical-composer-mention-before-current-composer',
+  isKnownReadyPromptBody('', 'codex', () => historicalComposerMentionScreen),
+  true
 )
 assertReadiness(
   'stale-header-bannerless-composer-without-signal',

@@ -120,7 +120,10 @@ export function hasCodexQuotedComposer(normalized: string): boolean {
     (line, index) =>
       CODEX_COMPOSER_TEXT_RE.test(line) &&
       (composerLineIndex === -1 || index !== composerLineIndex) &&
-      !isCodexComposerLine(line)
+      !isCodexComposerLine(line) &&
+      // A history line before the real current composer is harmless. When no exact composer is
+      // rendered, the same phrase is the only evidence and must remain a veto.
+      (composerLineIndex === -1 || index > composerLineIndex)
   )
 }
 
