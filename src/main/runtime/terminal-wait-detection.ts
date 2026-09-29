@@ -9,14 +9,7 @@ import type { RuntimeTerminalWaitBlockedReason } from '../../shared/runtime-type
 import type { TuiAgent } from '../../shared/tui-agent'
 import { findAntigravityReadyPromptIndex } from './antigravity-terminal-readiness'
 import { findCursorApprovalPromptIndex } from './terminal-wait-cursor-approval'
-import {
-  findCodexComposerScreenReadyPromptIndex,
-  findCodexReadyPromptIndex,
-  findCodexScreenReadyPromptIndex,
-  hasCodexActiveTurnInCurrentScreen,
-  hasCodexLoadingHeader,
-  hasCodexQuotedComposer
-} from './codex-terminal-readiness'
+import { findCodexReadyPromptIndex, classifyCodexScreenReadiness } from './codex-terminal-readiness'
 import { startOfLastNonBlankLines } from './terminal-wait-tail-window'
 
 const EXPLICIT_IDLE_TITLE_RE = /(^|\s)(ready|idle|done)(\s|$|[.!?])/i
@@ -78,58 +71,45 @@ export function isKnownReadyPromptBody(
   const normalizedWaitText = waitText.toLowerCase()
   const waitBlockedSignal = findActionableTerminalWaitBlockedSignal(normalizedWaitText)
   const codexScreenLines = agent === 'codex' ? readScreenLines() : null
-  const codexScreen = codexScreenLines?.join('\n').toLowerCase() ?? ''
-  const codexScreenReadyIndex =
+  const codexScreenReadiness =
     codexScreenLines === null
       ? null
-      : latestPromptIndex(
-          findCodexScreenReadyPromptIndex(codexScreen),
-          findCodexComposerScreenReadyPromptIndex(codexScreen, readCurrentCodexComposerSignal())
+      : classifyCodexScreenReadiness(
+          codexScreenLines,
+          readCurrentCodexComposerSignal(),
+          (screen) => findActionableTerminalWaitBlockedSignal(screen) !== null
         )
-  const codexScreenBlocked =
-    codexScreenLines === null ? null : findActionableTerminalWaitBlockedSignal(codexScreen)
-  // A dismissed startup dialog can remain in the retained tail. Let a current rendered Codex
-  // header/composer dismiss that history, while a blocker still painted on the screen wins.
-  if (
-    waitBlockedSignal !== null &&
-    !(agent === 'codex' && codexScreenReadyIndex !== null && codexScreenBlocked === null)
-  ) {
+  // A visible blocker or in-flight turn always vetoes retained text. The current rendered screen
+  // is the only evidence that can settle Codex; text is a compatibility fallback only when the
+  // renderer has no provider-specific state to classify (for example, a repaint-sized garble).
+  if (waitBlockedSignal !== null && (agent !== 'codex' || codexScreenReadiness !== 'ready')) {
     return false
   }
-  if (isKnownReadyPromptPreview(waitText)) {
-    if (codexScreenLines === null || agent !== 'codex') {
+  if (agent === 'codex' && codexScreenReadiness !== null) {
+    if (codexScreenReadiness === 'blocked' || codexScreenReadiness === 'pending') {
+      return false
+    }
+    if (codexScreenReadiness === 'ready') {
       return true
     }
-    // Text evidence remains authoritative when the emulator is behind a repaint. Only reject a
-    // displayed composer mention that is not the exact rendered prompt; loading/working cells can
-    // belong to the same stale frame and must not take a text-ready verdict away.
-    return (
-      codexScreenBlocked === null &&
-      !hasCodexQuotedComposer(codexScreen) &&
-      !hasCodexActiveTurnInCurrentScreen(codexScreen)
-    )
+  }
+  if (isKnownReadyPromptPreview(waitText)) {
+    if (agent !== 'codex' || codexScreenLines === null) {
+      return true
+    }
+    return codexScreenReadiness === 'unknown'
   }
   // Why the agent gate: another agent's screen can merely mention "OpenAI Codex".
   if (agent !== null && agent !== 'codex') {
     return false
   }
   const screenLines = codexScreenLines
-  const screen = codexScreen
-  const screenReadyIndex = codexScreenReadyIndex
   if (screenLines === null) {
-    return agent === 'codex' && readCurrentCodexComposerSignal()
+    // The scanner is only a watermark for a rendered composer. It cannot prove that the
+    // provider still owns the live screen after a handoff or repaint.
+    return false
   }
-  // Why: only the rendered screen can establish that a 0.158 composer is current. The bounded
-  // raw PTY replay is session history and has no wait/epoch watermark, so it is never a positive
-  // readiness source here; otherwise a marker from an earlier wait can satisfy a later one.
-  return (
-    screenLines !== null &&
-    codexScreenBlocked === null &&
-    !hasCodexQuotedComposer(screen) &&
-    !hasCodexActiveTurnInCurrentScreen(screen) &&
-    !hasCodexLoadingHeader(screen) &&
-    isReadyPromptUnblocked(screen, screenReadyIndex)
-  )
+  return codexScreenReadiness === 'ready'
 }
 
 function isReadyPromptUnblocked(normalized: string, readyIndex: number | null): boolean {
@@ -177,11 +157,6 @@ function findDismissedStartupModalIndex(normalized: string): number | null {
     findMuseReadyPromptIndex(normalized)
   ].filter((index): index is number => index !== null)
   return indexes.length > 0 ? Math.max(...indexes) : null
-}
-
-function latestPromptIndex(...indexes: (number | null)[]): number | null {
-  const present = indexes.filter((index): index is number => index !== null)
-  return present.length > 0 ? Math.max(...present) : null
 }
 
 function findKnownReadyPromptIndex(normalized: string): number | null {

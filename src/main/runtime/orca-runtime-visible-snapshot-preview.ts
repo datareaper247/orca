@@ -162,6 +162,7 @@ export class OrcaRuntimeWithVisibleSnapshotPreview extends OrcaRuntimeWithCaptur
     data: string
     cols: number
     rows: number
+    seq?: number
   }): Promise<RuntimeTerminalProjection> {
     if (snapshot.data.length === 0) {
       return { lines: [] }
@@ -173,7 +174,8 @@ export class OrcaRuntimeWithVisibleSnapshotPreview extends OrcaRuntimeWithCaptur
     })
     try {
       await emulator.write(`\x1b[2J\x1b[3J\x1b[H${snapshot.data}`)
-      return projectTerminalVisibleLines(emulator)
+      const projection = projectTerminalVisibleLines(emulator)
+      return snapshot.seq === undefined ? projection : { ...projection, sequence: snapshot.seq }
     } finally {
       emulator.dispose()
     }

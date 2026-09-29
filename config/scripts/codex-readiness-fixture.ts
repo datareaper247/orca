@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { isKnownReadyPromptBody } from '../../src/main/runtime/terminal-wait-detection'
 import { createDraftPasteReadyScanner } from '../../src/shared/draft-paste-ready-scanner'
 import { isVisibleReadProbeIdentityCurrent } from '../../src/main/runtime/visible-read-probe-identity'
@@ -34,6 +36,16 @@ const staleHistoryScreen = [
   '• Working (completed earlier)'
 ]
 const quotedComposerScreen = [...readyScreen.slice(0, 5), '“› Ask Codex to do anything”']
+const userQuotedComposerScreen = [
+  ...readyScreen.slice(0, 5),
+  'User quoted: › Ask Codex to do anything'
+]
+const staleHeaderBannerlessComposerScreen = [
+  'OpenAI Codex (v0.158)',
+  'model: GPT-6',
+  'directory: ~/repo',
+  '› Ask Codex to do anything'
+]
 const bannerlessComposerScreen = ['› Ask Codex to do anything']
 const completedTurnScreen = [
   ...readyScreen.slice(0, 5),
@@ -49,6 +61,19 @@ const historicalActiveTurnScreen = [
   '› Ask Codex to do anything'
 ]
 const otherAgentScreen = [...readyScreen.slice(0, 5), '• Running tests']
+const blockerScreens = [
+  ['update', 'Update available', 'Press enter to continue'],
+  ['trust', 'Do you trust the contents of this directory?', 'Press enter to continue'],
+  ['permission', 'Permission required', 'Press enter to continue'],
+  ['workspace', 'Choose working directory to continue', 'Press enter to continue']
+] as const
+
+const capturedTranscriptNames = [
+  'codex-0157-config-override-embedded-warning',
+  'codex-0157-effort-override-embedded-warning',
+  'codex-0157-no-daemon-effort-override',
+  'codex-0157-plain-ready'
+] as const
 
 function assertReadiness(label: string, actual: boolean, expected: boolean): void {
   if (actual !== expected) {
@@ -68,13 +93,13 @@ assertReadiness(
   false
 )
 assertReadiness(
-  'loading-header-does-not-veto-text',
+  'loading-header-vetoes-stale-text',
   isKnownReadyPromptBody(
     'OpenAI Codex\nmodel: GPT-6\ndirectory: ~/repo',
     'codex',
     () => loadingScreen
   ),
-  true
+  false
 )
 assertReadiness(
   'active-turn',
@@ -97,8 +122,28 @@ assertReadiness(
   false
 )
 assertReadiness(
+  'scanner-signal-without-screen',
+  isKnownReadyPromptBody(
+    '',
+    'codex',
+    () => null,
+    () => true
+  ),
+  false
+)
+assertReadiness(
   'quoted-composer-after-header',
   isKnownReadyPromptBody('', 'codex', () => quotedComposerScreen),
+  false
+)
+assertReadiness(
+  'user-quoted-composer-after-header',
+  isKnownReadyPromptBody('', 'codex', () => userQuotedComposerScreen),
+  false
+)
+assertReadiness(
+  'stale-header-bannerless-composer-without-signal',
+  isKnownReadyPromptBody('', 'codex', () => staleHeaderBannerlessComposerScreen),
   false
 )
 assertReadiness(
@@ -124,7 +169,7 @@ assertReadiness(
 assertReadiness(
   'historical-active-turn',
   isKnownReadyPromptBody('', 'codex', () => historicalActiveTurnScreen),
-  true
+  false
 )
 assertReadiness(
   'other-agent-running-text',
@@ -171,3 +216,23 @@ assertReadiness(
   isKnownReadyPromptBody(activeScreen.join('\n'), 'codex', () => activeScreen),
   false
 )
+
+for (const [name, ...lines] of blockerScreens) {
+  assertReadiness(
+    `visible-${name}-blocker`,
+    isKnownReadyPromptBody('', 'codex', () => [...readyScreen, ...lines]),
+    false
+  )
+}
+
+for (const name of capturedTranscriptNames) {
+  const bytes = readFileSync(join('src/main/runtime/__fixtures__', `${name}.txt`), 'utf8')
+  if (
+    !bytes.includes('OpenAI Codex') ||
+    !bytes.includes('model:') ||
+    !bytes.includes('directory:')
+  ) {
+    throw new Error(`captured transcript ${name} is missing Codex header evidence`)
+  }
+  process.stdout.write(`captured-transcript-${name}: present\n`)
+}

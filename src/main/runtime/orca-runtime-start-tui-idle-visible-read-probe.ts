@@ -114,6 +114,8 @@ export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWith
       agent === 'codex' ? createDraftPasteReadyScanner('codex-composer-prompt') : null
     let currentCodexComposerSignal = false
     let readInFlight = false
+    let retryRequested = false
+    let screenEpoch = 0
     let closed = false
     let unsubscribe: (() => void) | null = null
     let cleanupTimer: NodeJS.Timeout | null = null
@@ -127,9 +129,15 @@ export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWith
       }
     }
     const readAndClassify = (): void => {
-      if (closed || readInFlight) {
+      if (closed) {
         return
       }
+      if (readInFlight) {
+        retryRequested = true
+        return
+      }
+      const requestedScreenEpoch = screenEpoch
+      retryRequested = false
       readInFlight = true
       void withTimeout(
         this.readTerminal(waiter.handle, agent === 'antigravity' ? { screen: true } : {}, {
@@ -144,6 +152,12 @@ export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWith
       )
         .then((projection) => {
           if (!projection || closed || !isCurrentProbe()) {
+            return
+          }
+          // A PTY event during the provider snapshot makes that screen a historical frame. Do
+          // not settle from it; the finalizer below coalesces the event into one fresh read.
+          if (requestedScreenEpoch !== screenEpoch || retryRequested) {
+            retryRequested = true
             return
           }
           const hasScreen = projection.source === 'screen'
@@ -181,14 +195,21 @@ export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWith
         .catch(() => {})
         .finally(() => {
           readInFlight = false
+          if (retryRequested && !closed) {
+            retryRequested = false
+            readAndClassify()
+          }
         })
     }
     if (codexComposerScanner) {
       unsubscribe = this.subscribeToTerminalData(ptyId, (data) => {
-        if (closed || !codexComposerScanner.observe(data).ready) {
+        if (closed) {
           return
         }
-        currentCodexComposerSignal = true
+        screenEpoch += 1
+        if (codexComposerScanner.observe(data).ready) {
+          currentCodexComposerSignal = true
+        }
         readAndClassify()
       })
     }

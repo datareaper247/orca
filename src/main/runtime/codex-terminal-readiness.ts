@@ -4,7 +4,9 @@ const CODEX_ACTIVE_TURN_RE =
   /^\s*[│|]?\s*[•✻*]\s*(?:working|thinking|generating|planning|executing|running)\b/i
 const CODEX_COMPLETED_TURN_RE = /\b(?:completed|done|finished|earlier)\b/i
 
-function isCodexComposerLine(line: string): boolean {
+export type CodexScreenReadiness = 'ready' | 'blocked' | 'pending' | 'unknown'
+
+export function isCodexComposerLine(line: string): boolean {
   const withoutBorders = line
     .replace(/^\s*[│|]\s?/, '')
     .replace(/\s*[│|]\s*$/, '')
@@ -12,19 +14,12 @@ function isCodexComposerLine(line: string): boolean {
   return /^›\s*(?:ask codex to do anything|ask a follow-up question)\s*$/i.test(withoutBorders)
 }
 
-function findCodexComposerLineIndex(lines: readonly string[]): number {
+export function findCodexComposerLineIndex(lines: readonly string[]): number {
   return lines.findLastIndex(isCodexComposerLine)
 }
 
 function findCodexHeaderBottomIndex(lines: readonly string[], headerLineIndex: number): number {
   return lines.findIndex((line, index) => index > headerLineIndex && line.includes('╰'))
-}
-
-function codexTurnText(lines: readonly string[], composerLineIndex: number): string {
-  const previousPromptIndex = lines.findLastIndex(
-    (line, index) => index < composerLineIndex && /^\s*[›>]/.test(line)
-  )
-  return lines.slice(previousPromptIndex + 1, composerLineIndex).join('\n')
 }
 
 export function findCodexReadyPromptIndex(normalized: string): number | null {
@@ -98,7 +93,7 @@ export function findCodexComposerScreenReadyPromptIndex(
       return null
     }
   }
-  if (hasCodexActiveTurn(codexTurnText(lines, composerLineIndex))) {
+  if (hasCodexActiveTurnInCurrentScreen(normalized)) {
     return null
   }
   return lines.slice(0, composerLineIndex).reduce((offset, line) => offset + line.length + 1, 0)
@@ -113,9 +108,9 @@ export function hasCodexActiveTurn(normalized: string): boolean {
 export function hasCodexActiveTurnInCurrentScreen(normalized: string): boolean {
   const lines = normalized.split('\n')
   const composerLineIndex = findCodexComposerLineIndex(lines)
-  return composerLineIndex === -1
-    ? hasCodexActiveTurn(normalized)
-    : hasCodexActiveTurn(codexTurnText(lines, composerLineIndex))
+  return hasCodexActiveTurn(
+    composerLineIndex === -1 ? normalized : lines.slice(0, composerLineIndex).join('\n')
+  )
 }
 
 export function hasCodexQuotedComposer(normalized: string): boolean {
@@ -127,4 +122,49 @@ export function hasCodexQuotedComposer(normalized: string): boolean {
       (composerLineIndex === -1 || index !== composerLineIndex) &&
       !isCodexComposerLine(line)
   )
+}
+
+/**
+ * Classifies only the currently rendered Codex grid. A returned `unknown` deliberately permits
+ * the legacy text preview fallback during a repaint-sized/garbled grid; every visible Codex
+ * state that can be identified is fail-closed.
+ */
+export function classifyCodexScreenReadiness(
+  screenLines: readonly string[],
+  currentComposerSignal: boolean,
+  hasVisibleBlocker: (screen: string) => boolean
+): CodexScreenReadiness {
+  const screen = screenLines.join('\n').toLowerCase()
+  if (hasVisibleBlocker(screen)) {
+    return 'blocked'
+  }
+  if (hasCodexLoadingHeader(screen)) {
+    return 'pending'
+  }
+  if (hasCodexQuotedComposer(screen) || hasCodexActiveTurnInCurrentScreen(screen)) {
+    return 'pending'
+  }
+  const exactComposer = findCodexComposerScreenReadyPromptIndex(screen, true)
+  const hasExactComposer = screenLines.some((line) => isCodexComposerLine(line))
+  const headerIndex = screen.indexOf('openai codex')
+  const headerIsFramed =
+    headerIndex === -1 ||
+    (screen.lastIndexOf('╭', headerIndex) !== -1 && screen.includes('╰', headerIndex))
+  if (hasExactComposer && !screen.includes('openai codex') && !currentComposerSignal) {
+    return 'pending'
+  }
+  if (hasExactComposer && !headerIsFramed && !currentComposerSignal) {
+    return 'pending'
+  }
+  if (
+    findCodexScreenReadyPromptIndex(screen) !== null ||
+    findCodexComposerScreenReadyPromptIndex(screen, currentComposerSignal) !== null
+  ) {
+    return 'ready'
+  }
+  if (hasExactComposer && exactComposer === null) {
+    // This includes a bannerless composer without the fresh PTY scanner watermark.
+    return 'pending'
+  }
+  return 'unknown'
 }
