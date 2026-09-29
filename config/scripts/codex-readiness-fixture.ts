@@ -7,6 +7,8 @@ import {
   beginVisibleReadProbeRead,
   createVisibleReadProbeRetryState,
   finishVisibleReadProbeRead,
+  hasCurrentVisibleReadProbeComposerSignal,
+  noteVisibleReadProbeComposerSignal,
   noteVisibleReadProbeEvent,
   shouldRetryVisibleReadProbeRead
 } from '../../src/main/runtime/visible-read-probe-retry'
@@ -69,7 +71,7 @@ const completedTurnScreen = [
 const historicalActiveTurnScreen = [
   ...readyScreen.slice(0, 5),
   '› Earlier request',
-  '• Working (12s • esc to interrupt)',
+  '• Running the migration.',
   '› Current request',
   '› Ask Codex to do anything'
 ]
@@ -189,6 +191,14 @@ assertReadiness(
   true
 )
 assertReadiness(
+  'stale-preview-with-unrelated-screen',
+  isKnownReadyPromptBody('OpenAI Codex\nmodel: GPT-6\ndirectory: ~/repo', 'codex', () => [
+    'history',
+    '› old prompt'
+  ]),
+  false
+)
+assertReadiness(
   'completed-turn-history',
   isKnownReadyPromptBody('', 'codex', () => completedTurnScreen),
   true
@@ -196,7 +206,7 @@ assertReadiness(
 assertReadiness(
   'historical-active-turn',
   isKnownReadyPromptBody('', 'codex', () => historicalActiveTurnScreen),
-  false
+  true
 )
 assertReadiness(
   'other-agent-running-text',
@@ -232,6 +242,20 @@ assertReadiness(
   true
 )
 assertReadiness('scanner-during-provider-read-finish', finishVisibleReadProbeRead(retryState), true)
+
+const composerSignalState = createVisibleReadProbeRetryState()
+noteVisibleReadProbeComposerSignal(composerSignalState)
+assertReadiness(
+  'scanner-signal-current-frame',
+  hasCurrentVisibleReadProbeComposerSignal(composerSignalState),
+  true
+)
+noteVisibleReadProbeEvent(composerSignalState)
+assertReadiness(
+  'scanner-signal-stale-after-screen-event',
+  hasCurrentVisibleReadProbeComposerSignal(composerSignalState),
+  false
+)
 
 const capturedIdentity = {
   ptyId: 'pty-current',

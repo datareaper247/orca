@@ -29,6 +29,8 @@ import {
   beginVisibleReadProbeRead,
   createVisibleReadProbeRetryState,
   finishVisibleReadProbeRead,
+  hasCurrentVisibleReadProbeComposerSignal,
+  noteVisibleReadProbeComposerSignal,
   noteVisibleReadProbeEvent,
   shouldRetryVisibleReadProbeRead
 } from './visible-read-probe-retry'
@@ -119,7 +121,6 @@ export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWith
     }
     const codexComposerScanner =
       agent === 'codex' ? createDraftPasteReadyScanner('codex-composer-prompt') : null
-    let currentCodexComposerSignal = false
     const readRetryState = createVisibleReadProbeRetryState()
     let closed = false
     let unsubscribe: (() => void) | null = null
@@ -162,6 +163,8 @@ export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWith
             return
           }
           const hasScreen = projection.source === 'screen'
+          const currentCodexComposerSignal =
+            hasCurrentVisibleReadProbeComposerSignal(readRetryState)
           if (!hasScreen && !currentCodexComposerSignal) {
             return
           }
@@ -207,7 +210,7 @@ export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWith
         }
         noteVisibleReadProbeEvent(readRetryState)
         if (codexComposerScanner.observe(data).ready) {
-          currentCodexComposerSignal = true
+          noteVisibleReadProbeComposerSignal(readRetryState)
         }
         readAndClassify()
       })
