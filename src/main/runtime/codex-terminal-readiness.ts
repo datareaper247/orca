@@ -1,7 +1,31 @@
 const CODEX_HEADER_LOADING_RE = /(?:model|directory):\s+loading/
-const CODEX_COMPOSER_LINE_RE = /^›\s*(?:ask codex to do anything|ask a follow-up question)\s*$/i
+const CODEX_COMPOSER_TEXT_RE = /(?:ask codex to do anything|ask a follow-up question)/i
 const CODEX_ACTIVE_TURN_RE =
   /^\s*[│|]?\s*[•✻*]\s*(?:working|thinking|generating|planning|executing|running)\b/i
+const CODEX_COMPLETED_TURN_RE = /\b(?:completed|done|finished|earlier)\b/i
+
+function isCodexComposerLine(line: string): boolean {
+  const withoutBorders = line
+    .replace(/^\s*[│|]\s?/, '')
+    .replace(/\s*[│|]\s*$/, '')
+    .trim()
+  return /^›\s*(?:ask codex to do anything|ask a follow-up question)\s*$/i.test(withoutBorders)
+}
+
+function findCodexComposerLineIndex(lines: readonly string[]): number {
+  return lines.findLastIndex(isCodexComposerLine)
+}
+
+function findCodexHeaderBottomIndex(lines: readonly string[], headerLineIndex: number): number {
+  return lines.findIndex((line, index) => index > headerLineIndex && line.includes('╰'))
+}
+
+function codexTurnText(lines: readonly string[], composerLineIndex: number): string {
+  const previousPromptIndex = lines.findLastIndex(
+    (line, index) => index < composerLineIndex && /^\s*[›>]/.test(line)
+  )
+  return lines.slice(previousPromptIndex + 1, composerLineIndex).join('\n')
+}
 
 export function findCodexReadyPromptIndex(normalized: string): number | null {
   const headerIndex = normalized.lastIndexOf('openai codex')
@@ -16,6 +40,9 @@ export function findCodexReadyPromptIndex(normalized: string): number | null {
 // Why the header box only: chat below it can mention OpenAI Codex or model loading.
 // Why loading: a header still loading is not ready; the screen must not add readiness early.
 export function findCodexScreenReadyPromptIndex(screen: string): number | null {
+  if (hasCodexQuotedComposer(screen)) {
+    return null
+  }
   const headerIndex = screen.indexOf('openai codex')
   if (headerIndex === -1) {
     return null
@@ -39,46 +66,57 @@ export function hasCodexLoadingHeader(screen: string): boolean {
   return CODEX_HEADER_LOADING_RE.test(header)
 }
 
-export function findCodexComposerScreenReadyPromptIndex(normalized: string): number | null {
+export function findCodexComposerScreenReadyPromptIndex(
+  normalized: string,
+  allowBannerless = false
+): number | null {
   const lines = normalized.split('\n')
+  const composerLineIndex = findCodexComposerLineIndex(lines)
   const headerLineIndex = lines.findIndex((line) => line.includes('openai codex'))
-  if (headerLineIndex === -1) {
+  const headerBottomIndex =
+    headerLineIndex === -1 ? -1 : findCodexHeaderBottomIndex(lines, headerLineIndex)
+  const headerTopIndex =
+    headerLineIndex === -1
+      ? -1
+      : lines.slice(0, headerLineIndex + 1).findLastIndex((line) => line.includes('╭'))
+  if (composerLineIndex === -1) {
     return null
   }
-  const headerTopIndex = lines
-    .slice(0, headerLineIndex + 1)
-    .findLastIndex((line) => line.includes('╭'))
-  const headerBottomIndex = lines.findIndex(
-    (line, index) => index > headerLineIndex && line.includes('╰')
-  )
+  if (headerLineIndex === -1 && !allowBannerless) {
+    return null
+  }
   // Why the frame: a quoted OpenAI Codex line in chat is not the running Codex header.
-  if (headerTopIndex === -1 || headerBottomIndex === -1 || headerTopIndex > headerLineIndex) {
-    return null
+  if (headerLineIndex !== -1) {
+    if (headerTopIndex === -1 || headerBottomIndex === -1 || headerTopIndex > headerLineIndex) {
+      return null
+    }
+    if (composerLineIndex <= headerBottomIndex) {
+      return null
+    }
+    const header = lines.slice(headerTopIndex, headerBottomIndex + 1).join('\n')
+    if (CODEX_HEADER_LOADING_RE.test(header)) {
+      return null
+    }
   }
-  const header = lines.slice(headerTopIndex, headerBottomIndex + 1).join('\n')
-  if (CODEX_HEADER_LOADING_RE.test(header)) {
-    return null
-  }
-  const composerLineIndex = lines.findLastIndex(
-    (line, index) => index > headerBottomIndex && isCodexComposerLine(line)
-  )
-  if (
-    composerLineIndex === -1 ||
-    hasCodexActiveTurn(lines.slice(headerBottomIndex + 1).join('\n'))
-  ) {
+  if (hasCodexActiveTurn(codexTurnText(lines, composerLineIndex))) {
     return null
   }
   return lines.slice(0, composerLineIndex).reduce((offset, line) => offset + line.length + 1, 0)
 }
 
 export function hasCodexActiveTurn(normalized: string): boolean {
-  return normalized.split('\n').some((line) => CODEX_ACTIVE_TURN_RE.test(line))
+  return normalized
+    .split('\n')
+    .some((line) => CODEX_ACTIVE_TURN_RE.test(line) && !CODEX_COMPLETED_TURN_RE.test(line))
 }
 
-function isCodexComposerLine(line: string): boolean {
-  const withoutBorders = line
-    .replace(/^\s*[│|]\s?/, '')
-    .replace(/\s*[│|]\s*$/, '')
-    .trim()
-  return CODEX_COMPOSER_LINE_RE.test(withoutBorders)
+export function hasCodexQuotedComposer(normalized: string): boolean {
+  const lines = normalized.split('\n')
+  const composerLineIndex = findCodexComposerLineIndex(lines)
+  return lines.some(
+    (line, index) =>
+      CODEX_COMPOSER_TEXT_RE.test(line) &&
+      (composerLineIndex === -1 || index !== composerLineIndex) &&
+      !isCodexComposerLine(line)
+  )
 }

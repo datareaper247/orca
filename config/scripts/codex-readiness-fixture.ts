@@ -1,4 +1,6 @@
 import { isKnownReadyPromptBody } from '../../src/main/runtime/terminal-wait-detection'
+import { createDraftPasteReadyScanner } from '../../src/shared/draft-paste-ready-scanner'
+import { isVisibleReadProbeIdentityCurrent } from '../../src/main/runtime/visible-read-probe-identity'
 
 const readyScreen = [
   '╭────────────────────────╮',
@@ -31,6 +33,15 @@ const staleHistoryScreen = [
   '› OpenAI Codex was ready in the earlier turn',
   '• Working (completed earlier)'
 ]
+const quotedComposerScreen = [...readyScreen.slice(0, 5), '“› Ask Codex to do anything”']
+const bannerlessComposerScreen = ['› Ask Codex to do anything']
+const completedTurnScreen = [
+  ...readyScreen.slice(0, 5),
+  '› Summarize the repository layout',
+  '• Working (completed earlier)',
+  '› Ask Codex to do anything'
+]
+const otherAgentScreen = [...readyScreen.slice(0, 5), '• Running tests']
 
 function assertReadiness(label: string, actual: boolean, expected: boolean): void {
   if (actual !== expected) {
@@ -50,13 +61,13 @@ assertReadiness(
   false
 )
 assertReadiness(
-  'loading-header-vetoes-stale-text',
+  'loading-header-does-not-veto-text',
   isKnownReadyPromptBody(
     'OpenAI Codex\nmodel: GPT-6\ndirectory: ~/repo',
     'codex',
     () => loadingScreen
   ),
-  false
+  true
 )
 assertReadiness(
   'active-turn',
@@ -70,16 +81,77 @@ assertReadiness(
 )
 assertReadiness(
   'stale-history',
-  isKnownReadyPromptBody(
-    'OpenAI Codex\nmodel: GPT-6\ndirectory: ~/repo',
-    'codex',
-    () => staleHistoryScreen
-  ),
+  isKnownReadyPromptBody('', 'codex', () => staleHistoryScreen),
   false
 )
 assertReadiness(
   'stale-buffer-composer',
   isKnownReadyPromptBody('› Ask Codex to do anything', 'codex', () => null),
+  false
+)
+assertReadiness(
+  'quoted-composer-after-header',
+  isKnownReadyPromptBody('', 'codex', () => quotedComposerScreen),
+  false
+)
+assertReadiness(
+  'bannerless-current-composer-without-signal',
+  isKnownReadyPromptBody('', 'codex', () => bannerlessComposerScreen),
+  false
+)
+assertReadiness(
+  'bannerless-current-composer-after-signal',
+  isKnownReadyPromptBody(
+    '',
+    'codex',
+    () => bannerlessComposerScreen,
+    () => true
+  ),
+  true
+)
+assertReadiness(
+  'completed-turn-history',
+  isKnownReadyPromptBody('', 'codex', () => completedTurnScreen),
+  true
+)
+assertReadiness(
+  'other-agent-running-text',
+  isKnownReadyPromptBody(
+    'OpenAI Codex\nmodel: GPT-6\ndirectory: ~/repo',
+    'cursor',
+    () => otherAgentScreen
+  ),
+  true
+)
+
+const scanner = createDraftPasteReadyScanner('codex-composer-prompt')
+assertReadiness('current-scanner-anchor', scanner.observe('\x1b[?2004h').ready, false)
+assertReadiness('current-scanner-composer', scanner.observe('›').ready, true)
+
+const capturedIdentity = {
+  ptyId: 'pty-current',
+  rendererGraphEpoch: 7,
+  ptyGeneration: 3,
+  lifecycleGeneration: 11,
+  outputSequence: 17
+}
+assertReadiness(
+  'provider-screen-output-race',
+  // The provider snapshot watermark accepts bytes that arrive during the read.
+  isVisibleReadProbeIdentityCurrent(
+    capturedIdentity,
+    { ...capturedIdentity, outputSequence: 18 },
+    true
+  ),
+  true
+)
+assertReadiness(
+  'provider-screen-replacement-race',
+  isVisibleReadProbeIdentityCurrent(
+    capturedIdentity,
+    { ...capturedIdentity, ptyId: 'pty-replacement' },
+    true
+  ),
   false
 )
 assertReadiness(

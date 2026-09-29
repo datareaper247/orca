@@ -8,14 +8,16 @@ import {
 import type { RuntimeTerminalWaitBlockedReason } from '../../shared/runtime-types'
 import type { TuiAgent } from '../../shared/tui-agent'
 import { findAntigravityReadyPromptIndex } from './antigravity-terminal-readiness'
+import { findCursorApprovalPromptIndex } from './terminal-wait-cursor-approval'
 import {
   findCodexComposerScreenReadyPromptIndex,
   findCodexReadyPromptIndex,
   findCodexScreenReadyPromptIndex,
   hasCodexActiveTurn,
-  hasCodexLoadingHeader
+  hasCodexLoadingHeader,
+  hasCodexQuotedComposer
 } from './codex-terminal-readiness'
-import { startOfLastLines, startOfLastNonBlankLines } from './terminal-wait-tail-window'
+import { startOfLastNonBlankLines } from './terminal-wait-tail-window'
 
 const EXPLICIT_IDLE_TITLE_RE = /(^|\s)(ready|idle|done)(\s|$|[.!?])/i
 const CLAUDE_IDLE_PREFIX = '\u2733'
@@ -67,45 +69,65 @@ export function isKnownReadyPromptPreview(preview: string): boolean {
 export function isKnownReadyPromptBody(
   waitText: string,
   agent: TuiAgent | null,
-  readScreenLines: () => readonly string[] | null
+  readScreenLines: () => readonly string[] | null,
+  readCurrentCodexComposerSignal: () => boolean = () => false
 ): boolean {
   if (agent === 'qoder') {
     return isQoderComposerReady(readScreenLines())
   }
   const normalizedWaitText = waitText.toLowerCase()
-  if (findActionableTerminalWaitBlockedSignal(normalizedWaitText) !== null) {
+  const waitBlockedSignal = findActionableTerminalWaitBlockedSignal(normalizedWaitText)
+  const codexScreenLines = agent === 'codex' ? readScreenLines() : null
+  const codexScreen = codexScreenLines?.join('\n').toLowerCase() ?? ''
+  const codexScreenReadyIndex =
+    codexScreenLines === null
+      ? null
+      : latestPromptIndex(
+          findCodexScreenReadyPromptIndex(codexScreen),
+          findCodexComposerScreenReadyPromptIndex(codexScreen, readCurrentCodexComposerSignal())
+        )
+  const codexScreenBlocked =
+    codexScreenLines === null ? null : findActionableTerminalWaitBlockedSignal(codexScreen)
+  // A dismissed startup dialog can remain in the retained tail. Let a current rendered Codex
+  // header/composer dismiss that history, while a blocker still painted on the screen wins.
+  if (
+    waitBlockedSignal !== null &&
+    !(agent === 'codex' && codexScreenReadyIndex !== null && codexScreenBlocked === null)
+  ) {
     return false
   }
   if (isKnownReadyPromptPreview(waitText)) {
-    const screenLines = readScreenLines()
-    if (screenLines === null) {
+    if (codexScreenLines === null || agent !== 'codex') {
       return true
     }
-    const screen = screenLines.join('\n').toLowerCase()
-    // A retained line-folded header is allowed to settle only when the live grid does not
-    // contradict it. In particular, a working turn below the header must win over scrollback.
+    // Text evidence remains authoritative when the emulator is behind a repaint. Only reject a
+    // displayed composer mention that is not the exact rendered prompt; loading/working cells can
+    // belong to the same stale frame and must not take a text-ready verdict away.
     return (
-      findActionableTerminalWaitBlockedSignal(screen) === null &&
-      !hasCodexActiveTurn(screen) &&
-      !hasCodexLoadingHeader(screen)
+      codexScreenBlocked === null &&
+      !hasCodexQuotedComposer(codexScreen) &&
+      !hasCodexActiveTurn(codexScreen)
     )
   }
   // Why the agent gate: another agent's screen can merely mention "OpenAI Codex".
   if (agent !== null && agent !== 'codex') {
     return false
   }
-  const screenLines = readScreenLines()
-  const screen = screenLines?.join('\n').toLowerCase() ?? ''
-  const screenReadyIndex = latestPromptIndex(
-    findCodexScreenReadyPromptIndex(screen),
-    findCodexComposerScreenReadyPromptIndex(screen)
-  )
+  const screenLines = codexScreenLines
+  const screen = codexScreen
+  const screenReadyIndex = codexScreenReadyIndex
+  if (screenLines === null) {
+    return agent === 'codex' && readCurrentCodexComposerSignal()
+  }
   // Why: only the rendered screen can establish that a 0.158 composer is current. The bounded
   // raw PTY replay is session history and has no wait/epoch watermark, so it is never a positive
   // readiness source here; otherwise a marker from an earlier wait can satisfy a later one.
   return (
     screenLines !== null &&
+    codexScreenBlocked === null &&
+    !hasCodexQuotedComposer(screen) &&
     !hasCodexActiveTurn(screen) &&
+    !hasCodexLoadingHeader(screen) &&
     isReadyPromptUnblocked(screen, screenReadyIndex)
   )
 }
@@ -206,51 +228,6 @@ function findMuseReadyPromptIndex(normalized: string): number | null {
 
 export const TERMINAL_WAIT_BLOCKED_SENTINEL_RE =
   /update available|choose working directory to|codex just got an upgrade|hooks need review|do you trust|trust this|trusted workspace|press enter to (?:confirm|continue|view|insert)|press t to trust|permission required|requires permission|allow once|allow always|run this command\?/i
-
-// Why text at all: cursor-agent has no approval hook, so the key-bound menu is the only authority.
-const CURSOR_APPROVAL_CHOICE_MARKERS = [
-  'run (once)',
-  'to allowlist?',
-  'run everything',
-  'skip & tell the agent'
-]
-// Why bounded: an answered menu remains in scrollback; only a dialog owning the screen bottom is live.
-const CURSOR_APPROVAL_TAIL_LINES = 8
-
-function findCursorApprovalPromptIndex(normalized: string): number | null {
-  const windowStart = startOfLastLines(normalized, CURSOR_APPROVAL_TAIL_LINES)
-  const tail = normalized.slice(windowStart)
-  if (!tail.includes('run this command?')) {
-    return null
-  }
-  const lines = tail.split('\n')
-  while (lines.length > 0 && lines.at(-1)?.trim() === '') {
-    lines.pop()
-  }
-  let matchedLines = 0
-  let lastChoiceLine = -1
-  for (let index = 0; index < lines.length; index += 1) {
-    if (!isCursorApprovalChoiceLine(lines[index])) {
-      continue
-    }
-    matchedLines += 1
-    lastChoiceLine = index
-  }
-  return matchedLines >= 2 && lastChoiceLine === lines.length - 1
-    ? windowStart + tail.lastIndexOf('run this command?')
-    : null
-}
-
-// Why the trailing key: narration can repeat the menu wording, but it does not end in a selectable key.
-const CURSOR_APPROVAL_CHOICE_KEY_RE =
-  /\((?:shift\+tab|ctrl\+[a-z]|esc(?: or [a-z])*|tab|enter|return|space|[a-z]|[\u21b5\u21e7\u21b9\u238b\u23ce]{1,3})\)\s*$/
-
-function isCursorApprovalChoiceLine(line: string): boolean {
-  return (
-    CURSOR_APPROVAL_CHOICE_KEY_RE.test(line) &&
-    CURSOR_APPROVAL_CHOICE_MARKERS.some((marker) => line.includes(marker))
-  )
-}
 
 // Why bounded: answered dialogs and quoted prompt wording (agents grep this file and its specs) stay in the
 // retained tail; only a dialog owning the screen bottom is live. Real Codex dialogs (trust, hooks review,

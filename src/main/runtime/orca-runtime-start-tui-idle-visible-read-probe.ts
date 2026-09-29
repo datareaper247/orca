@@ -23,6 +23,8 @@ import {
 import { createSetupCompletionScanner } from './orchestration/setup-completion-signal'
 import { isAntigravityReadyPromptSnapshot } from './antigravity-terminal-readiness'
 import type { TuiAgent } from '../../shared/tui-agent'
+import { createDraftPasteReadyScanner } from '../../shared/draft-paste-ready-scanner'
+import { isVisibleReadProbeIdentityCurrent } from './visible-read-probe-identity'
 
 export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWithCreateAgentPromptRenderGate {
   /** One bounded look at the provider's screen for an adopted PTY whose retained
@@ -61,12 +63,14 @@ export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWith
       initialPty?.record.rendererGraphEpoch ?? initialHandleRecord?.rendererGraphEpoch ?? null
     const ptyGeneration = initialPty?.record.ptyGeneration ?? initialLeaf?.ptyGeneration ?? null
     const lifecycleGeneration = this.getPtyLifecycleGeneration(ptyId)
-    const outputSequenceAtStart = this.getPtyOutputSequence(ptyId)
+    const capturedIdentity = {
+      ptyId,
+      rendererGraphEpoch,
+      ptyGeneration,
+      lifecycleGeneration
+    }
     const isCurrentProbe = (): boolean => {
       try {
-        if (!this.terminalWaiters.get(waiter.handle)?.has(waiter)) {
-          return false
-        }
         const currentPty = this.getLivePtyForHandle(waiter.handle)
         const currentLeafRecord = currentPty ? null : this.getLiveLeafForHandle(waiter.handle)
         const currentLeaf = currentLeafRecord?.leaf ?? null
@@ -77,12 +81,15 @@ export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWith
           null
         const currentPtyGeneration =
           currentPty?.record.ptyGeneration ?? currentLeaf?.ptyGeneration ?? null
-        return (
-          currentPtyId === ptyId &&
-          currentRendererGraphEpoch === rendererGraphEpoch &&
-          currentPtyGeneration === ptyGeneration &&
-          this.getPtyLifecycleGeneration(ptyId) === lifecycleGeneration &&
-          this.getPtyOutputSequence(ptyId) === outputSequenceAtStart
+        return isVisibleReadProbeIdentityCurrent(
+          capturedIdentity,
+          {
+            ptyId: currentPtyId ?? '',
+            rendererGraphEpoch: currentRendererGraphEpoch,
+            ptyGeneration: currentPtyGeneration,
+            lifecycleGeneration: this.getPtyLifecycleGeneration(ptyId)
+          },
+          Boolean(this.terminalWaiters.get(waiter.handle)?.has(waiter))
         )
       } catch {
         return false
@@ -103,40 +110,90 @@ export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWith
     if (providerTimeoutMs < 1) {
       return
     }
-    void withTimeout(
-      this.readTerminal(waiter.handle, agent === 'antigravity' ? { screen: true } : {}, {
-        timeoutMs: providerTimeoutMs,
-        retireOnTimeout: true,
-        // Why: the ready banner stays in scrollback for the whole session, so
-        // classifying history would call a working agent idle (#15569 review).
-        visibleScreenOnly: true
-      } satisfies RuntimeProviderSnapshotReadOptions),
-      probeTimeoutMs,
-      null
-    )
-      .then((projection) => {
-        if (!projection || projection.source !== 'screen' || !isCurrentProbe()) {
+    const codexComposerScanner =
+      agent === 'codex' ? createDraftPasteReadyScanner('codex-composer-prompt') : null
+    let currentCodexComposerSignal = false
+    let readInFlight = false
+    let closed = false
+    let unsubscribe: (() => void) | null = null
+    let cleanupTimer: NodeJS.Timeout | null = null
+    const cleanup = (): void => {
+      closed = true
+      unsubscribe?.()
+      unsubscribe = null
+      if (cleanupTimer) {
+        clearTimeout(cleanupTimer)
+        cleanupTimer = null
+      }
+    }
+    const readAndClassify = (): void => {
+      if (closed || readInFlight) {
+        return
+      }
+      readInFlight = true
+      void withTimeout(
+        this.readTerminal(waiter.handle, agent === 'antigravity' ? { screen: true } : {}, {
+          timeoutMs: providerTimeoutMs,
+          retireOnTimeout: true,
+          // Why: the ready banner stays in scrollback for the whole session, so
+          // classifying history would call a working agent idle (#15569 review).
+          visibleScreenOnly: true
+        } satisfies RuntimeProviderSnapshotReadOptions),
+        probeTimeoutMs,
+        null
+      )
+        .then((projection) => {
+          if (!projection || closed || !isCurrentProbe()) {
+            return
+          }
+          const hasScreen = projection.source === 'screen'
+          if (!hasScreen && !currentCodexComposerSignal) {
+            return
+          }
+          const snapshotText =
+            agent === 'antigravity'
+              ? [...projection.tail, projection.draft ?? ''].join('\n')
+              : projection.tail.join('\n')
+          const blockedReason = detectTerminalWaitBlockedReason(snapshotText)
+          const ready =
+            agent === 'antigravity'
+              ? hasScreen && isAntigravityReadyPromptSnapshot(snapshotText)
+              : isKnownReadyPromptBody(
+                  hasScreen ? snapshotText : '',
+                  agent,
+                  () => (hasScreen ? projection.tail : null),
+                  () => currentCodexComposerSignal
+                )
+          if (!blockedReason && !ready) {
+            return
+          }
+          if (!isCurrentProbe()) {
+            return
+          }
+          closed = true
+          cleanup()
+          const result = this.buildTuiIdleProbeResult(waiter.handle, blockedReason)
+          if (waiter.cancelIdlePoll) {
+            waiter.cancelIdlePoll()
+          }
+          this.terminalWaiters.resolve(waiter, result)
+        })
+        .catch(() => {})
+        .finally(() => {
+          readInFlight = false
+        })
+    }
+    if (codexComposerScanner) {
+      unsubscribe = this.subscribeToTerminalData(ptyId, (data) => {
+        if (closed || !codexComposerScanner.observe(data).ready) {
           return
         }
-        const snapshotText =
-          agent === 'antigravity'
-            ? [...projection.tail, projection.draft ?? ''].join('\n')
-            : projection.tail.join('\n')
-        const blockedReason = detectTerminalWaitBlockedReason(snapshotText)
-        const ready =
-          agent === 'antigravity'
-            ? isAntigravityReadyPromptSnapshot(snapshotText)
-            : isKnownReadyPromptBody(snapshotText, agent, () => projection.tail)
-        if (!blockedReason && !ready) {
-          return
-        }
-        const result = this.buildTuiIdleProbeResult(waiter.handle, blockedReason)
-        if (waiter.cancelIdlePoll) {
-          waiter.cancelIdlePoll()
-        }
-        this.terminalWaiters.resolve(waiter, result)
+        currentCodexComposerSignal = true
+        readAndClassify()
       })
-      .catch(() => {})
+    }
+    cleanupTimer = setTimeout(cleanup, probeTimeoutMs)
+    readAndClassify()
   }
 
   protected buildTuiIdleProbeResult(
