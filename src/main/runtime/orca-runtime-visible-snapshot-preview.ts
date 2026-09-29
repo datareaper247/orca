@@ -162,7 +162,6 @@ export class OrcaRuntimeWithVisibleSnapshotPreview extends OrcaRuntimeWithCaptur
     data: string
     cols: number
     rows: number
-    seq?: number
   }): Promise<RuntimeTerminalProjection> {
     if (snapshot.data.length === 0) {
       return { lines: [] }
