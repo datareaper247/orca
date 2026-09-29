@@ -1,6 +1,6 @@
 const CODEX_HEADER_LOADING_RE = /(?:model|directory):\s+loading/
 const CODEX_COMPOSER_TEXT_RE = /(?:ask codex to do anything|ask a follow-up question)/i
-const CODEX_GARBLED_COMPOSER_RE = /^\s*[›>]\s*.*(?:anything|shortcuts)\b/i
+const CODEX_GARBLED_COMPOSER_RE = /^\s*[›>]\s*\??\S*shortcuts\b.*\banything\b/i
 const CODEX_ACTIVE_TURN_RE =
   /^\s*[│|]?\s*[•✻*]\s*(?:working|thinking|generating|planning|executing|running)\b.*(?:esc to interrupt|\(\s*\d+(?:\.\d+)?\s*(?:ms|s|m)\b)/i
 const CODEX_COMPLETED_TURN_RE = /\b(?:completed|done|finished|earlier)\b/i
