@@ -143,6 +143,16 @@ const readinessCases: ReadinessCase[] = [
     false
   ],
   [
+    'bannerless-header-only-after-signal',
+    screenReadiness(
+      'OpenAI Codex\nmodel: GPT-6\ndirectory: ~/repo',
+      bannerlessHeaderOnlyScreen,
+      'codex',
+      true
+    ),
+    false
+  ],
+  [
     'bannerless-current-composer-without-signal',
     screenReadiness('', bannerlessComposerScreen),
     false

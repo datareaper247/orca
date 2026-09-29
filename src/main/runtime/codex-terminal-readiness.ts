@@ -174,9 +174,9 @@ export function classifyCodexScreenReadiness(
   if (hasExactComposer && !headerIsFramed && !currentComposerSignal) {
     return 'pending'
   }
-  if (!hasExactComposer && headerIndex !== -1 && !headerIsFramed && !currentComposerSignal) {
-    // An unframed header can be retained history. It cannot settle a wait without current
-    // composer evidence, even when the text preview contains a matching ready header.
+  if (!hasExactComposer && headerIndex !== -1 && !headerIsFramed) {
+    // An unframed header can be retained history. A scanner signal authorizes only a visible
+    // composer; it must never settle a header-only screen, even when the text preview matches.
     return 'pending'
   }
   if (
