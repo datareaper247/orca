@@ -11,7 +11,7 @@ import {
 import { withTimeout } from './runtime-async-boundaries'
 import {
   detectTerminalWaitBlockedReason,
-  isKnownReadyPromptPreview
+  isKnownReadyPromptBody
 } from './terminal-wait-detection'
 import type {
   RuntimeTerminalWait,
@@ -80,7 +80,12 @@ export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWith
         const ready =
           agent === 'antigravity'
             ? isAntigravityReadyPromptSnapshot(snapshotText)
-            : isKnownReadyPromptPreview(snapshotText)
+            : isKnownReadyPromptBody(
+                snapshotText,
+                agent,
+                () => projection.tail,
+                () => this.recentPtyOutputById.get(ptyId)?.read() ?? null
+              )
         if (!blockedReason && !ready) {
           return
         }

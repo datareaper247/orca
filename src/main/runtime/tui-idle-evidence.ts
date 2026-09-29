@@ -308,6 +308,8 @@ export type TuiIdleEvidenceSource = {
   getPaneAgent(ptyId: string | null | undefined): TuiAgent | null
   getFirstPartyAgentStatus(ptyId: string | null | undefined): FirstPartyAgentStatus
   readScreenLines(ptyId: string | null | undefined): readonly string[] | null
+  /** Raw bounded PTY bytes let readiness reuse the agent-specific composer marker. */
+  readRecentOutput?(ptyId: string | null | undefined): string | null
 }
 
 function lazyWaitText(readWaitText: () => string): () => string {
@@ -327,7 +329,12 @@ export function leafTuiIdleEvidence(
     readTailBlockedReason: () => detectTerminalWaitBlockedReason(waitText()),
     rendererTitle: leaf.paneTitle ?? source.getTabTitle(leaf.tabId),
     readPositiveBodyEvidence: () =>
-      isKnownReadyPromptBody(waitText(), agent, () => source.readScreenLines(leaf.ptyId)),
+      isKnownReadyPromptBody(
+        waitText(),
+        agent,
+        () => source.readScreenLines(leaf.ptyId),
+        () => source.readRecentOutput?.(leaf.ptyId) ?? null
+      ),
     readMuseReadyBodyEvidence: () => isMuseReadyPromptPreview(waitText()),
     agent,
     firstPartyStatus: source.getFirstPartyAgentStatus(leaf.ptyId),
@@ -347,7 +354,12 @@ export function ptyTuiIdleEvidence(
     readTailBlockedReason: () => detectTerminalWaitBlockedReason(waitText()),
     readPositiveBodyEvidence: () =>
       (agent !== 'qoder' && source.getAdoptedPtyIdleStatus(pty) === 'idle') ||
-      isKnownReadyPromptBody(waitText(), agent, () => source.readScreenLines(pty.ptyId)),
+      isKnownReadyPromptBody(
+        waitText(),
+        agent,
+        () => source.readScreenLines(pty.ptyId),
+        () => source.readRecentOutput?.(pty.ptyId) ?? null
+      ),
     readMuseReadyBodyEvidence: () => isMuseReadyPromptPreview(waitText()),
     agent,
     firstPartyStatus: source.getFirstPartyAgentStatus(pty.ptyId),

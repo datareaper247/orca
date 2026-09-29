@@ -1,4 +1,5 @@
 import { isQoderComposerReady } from './qoder-terminal-readiness'
+import { createDraftPasteReadyScanner } from '../../shared/draft-paste-ready-scanner'
 import { memoizeTitleClassification } from '../../shared/terminal-title-classification-memo'
 import {
   detectAgentStatusFromTitle,
@@ -60,24 +61,45 @@ export function isKnownReadyPromptPreview(preview: string): boolean {
 export function isKnownReadyPromptBody(
   waitText: string,
   agent: TuiAgent | null,
-  readScreenLines: () => readonly string[] | null
+  readScreenLines: () => readonly string[] | null,
+  readRecentOutput: () => string | null = () => null
 ): boolean {
   if (agent === 'qoder') {
     return isQoderComposerReady(readScreenLines())
   }
+  const normalizedWaitText = waitText.toLowerCase()
+  if (findActionableTerminalWaitBlockedSignal(normalizedWaitText) !== null) {
+    return false
+  }
   if (isKnownReadyPromptPreview(waitText)) {
-    return true
+    const screenLines = readScreenLines()
+    return (
+      screenLines === null ||
+      findActionableTerminalWaitBlockedSignal(screenLines.join('\n').toLowerCase()) === null
+    )
   }
   // Why the agent gate: another agent's screen can merely mention "OpenAI Codex".
   if (agent !== null && agent !== 'codex') {
     return false
   }
   const screenLines = readScreenLines()
-  if (screenLines === null) {
+  const screen = screenLines?.join('\n').toLowerCase() ?? ''
+  const screenReadyIndex = latestPromptIndex(
+    findCodexScreenReadyPromptIndex(screen),
+    findCodexComposerScreenReadyPromptIndex(screen)
+  )
+  const screenReady =
+    screenLines !== null && isReadyPromptUnblocked(screen, screenReadyIndex)
+  const recentOutput = readRecentOutput()
+  const transcriptReady =
+    recentOutput !== null &&
+    createDraftPasteReadyScanner('codex-composer-prompt').observe(recentOutput).ready
+  if (!screenReady && !transcriptReady) {
     return false
   }
-  const screen = screenLines.join('\n').toLowerCase()
-  return isReadyPromptUnblocked(screen, findCodexScreenReadyPromptIndex(screen))
+  // Why: a current startup dialog must veto the positive marker, even when the dialog is only
+  // visible in the rendered screen and the retained line tail has already scrolled past it.
+  return screen.length === 0 || findActionableTerminalWaitBlockedSignal(screen) === null
 }
 
 function isReadyPromptUnblocked(normalized: string, readyIndex: number | null): boolean {
@@ -120,11 +142,39 @@ export function findActionableTerminalWaitBlockedSignal(
 function findDismissedStartupModalIndex(normalized: string): number | null {
   const indexes = [
     findCodexReadyPromptIndex(normalized),
+    findCodexComposerPromptIndex(normalized),
     findAntigravityReadyPromptIndex(normalized),
     findCursorActivePromptIndex(normalized),
     findMuseReadyPromptIndex(normalized)
   ].filter((index): index is number => index !== null)
   return indexes.length > 0 ? Math.max(...indexes) : null
+}
+
+function findCodexComposerPromptIndex(normalized: string): number | null {
+  const indexes = [
+    normalized.lastIndexOf('› ask codex to do anything'),
+    normalized.lastIndexOf('› ask a follow-up question')
+  ].filter((index): index is number => index !== -1)
+  return indexes.length > 0 ? Math.max(...indexes) : null
+}
+
+function findCodexComposerScreenReadyPromptIndex(normalized: string): number | null {
+  const promptIndex = findCodexComposerPromptIndex(normalized)
+  if (promptIndex === null) {
+    return null
+  }
+  const headerIndex = normalized.indexOf('openai codex')
+  if (headerIndex === -1) {
+    return promptIndex
+  }
+  const boxEnd = normalized.indexOf('╰', headerIndex)
+  const header = normalized.slice(headerIndex, boxEnd === -1 ? undefined : boxEnd)
+  return CODEX_HEADER_LOADING_RE.test(header) ? null : promptIndex
+}
+
+function latestPromptIndex(...indexes: (number | null)[]): number | null {
+  const present = indexes.filter((index): index is number => index !== null)
+  return present.length > 0 ? Math.max(...present) : null
 }
 
 function findKnownReadyPromptIndex(normalized: string): number | null {
