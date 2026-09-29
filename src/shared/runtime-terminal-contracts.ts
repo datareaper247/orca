@@ -194,8 +194,6 @@ export type RuntimeTerminalRead = {
   latestCursor?: string
   returnedLineCount?: number
   source?: 'stream' | 'screen' | 'screen-unavailable'
-  /** Provider/renderer output watermark for a rendered-screen read. */
-  screenEpoch?: number
   /** UI-only composer text, excluded from `tail`. */
   draft?: string
 }

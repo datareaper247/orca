@@ -140,8 +140,7 @@ export function buildVisibleSnapshotReadFallback(
   read: RuntimeTerminalRead,
   visibleLines: string[],
   limit: number | undefined,
-  draft?: string,
-  screenEpoch?: number
+  draft?: string
 ): RuntimeTerminalRead {
   const lineLimit = terminalReadLimit(limit, DEFAULT_TERMINAL_READ_LIMIT)
   const lineBoundedTail = visibleLines.slice(-lineLimit)
@@ -156,8 +155,7 @@ export function buildVisibleSnapshotReadFallback(
       read.limited || lineBoundedTail.length < visibleLines.length || charBoundedTail.limited,
     returnedLineCount: charBoundedTail.tail.length,
     source: 'screen',
-    ...(draft ? { draft } : {}),
-    ...(screenEpoch === undefined ? {} : { screenEpoch })
+    ...(draft ? { draft } : {})
   }
 }
 

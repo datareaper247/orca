@@ -111,8 +111,7 @@ export class OrcaRuntimeWithCaptureProviderTerminalBuffer extends OrcaRuntimeWit
           read,
           providerProjection.lines,
           opts.limit,
-          providerProjection.draft,
-          providerProjection.sequence
+          providerProjection.draft
         )
       }
     }
@@ -144,13 +143,7 @@ export class OrcaRuntimeWithCaptureProviderTerminalBuffer extends OrcaRuntimeWit
     if (projection.lines.length === 0) {
       return read
     }
-    return buildVisibleSnapshotReadFallback(
-      read,
-      projection.lines,
-      opts.limit,
-      projection.draft,
-      projection.sequence
-    )
+    return buildVisibleSnapshotReadFallback(read, projection.lines, opts.limit, projection.draft)
   }
 
   protected async readProviderTerminalTailLines(
@@ -175,7 +168,7 @@ export class OrcaRuntimeWithCaptureProviderTerminalBuffer extends OrcaRuntimeWit
       // Live bytes ordered after the provider frame make that frame stale.
       return this.ptyLifecycleGenerationById.get(ptyId) === generation &&
         this.getPtyOutputSequence(ptyId) <= snapshot.seq
-        ? { ...projection, sequence: snapshot.seq }
+        ? projection
         : { lines: [] }
     }
     const data = `${snapshot.scrollbackAnsi ?? ''}${snapshot.data}`
@@ -192,7 +185,7 @@ export class OrcaRuntimeWithCaptureProviderTerminalBuffer extends OrcaRuntimeWit
       const projection = projectTerminalTailLines(emulator, lineLimit)
       return this.ptyLifecycleGenerationById.get(ptyId) === generation &&
         this.getPtyOutputSequence(ptyId) <= snapshot.seq
-        ? { ...projection, sequence: snapshot.seq }
+        ? projection
         : { lines: [] }
     } finally {
       emulator.dispose()

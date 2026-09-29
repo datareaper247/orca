@@ -174,8 +174,7 @@ export class OrcaRuntimeWithVisibleSnapshotPreview extends OrcaRuntimeWithCaptur
     })
     try {
       await emulator.write(`\x1b[2J\x1b[3J\x1b[H${snapshot.data}`)
-      const projection = projectTerminalVisibleLines(emulator)
-      return snapshot.seq === undefined ? projection : { ...projection, sequence: snapshot.seq }
+      return projectTerminalVisibleLines(emulator)
     } finally {
       emulator.dispose()
     }
