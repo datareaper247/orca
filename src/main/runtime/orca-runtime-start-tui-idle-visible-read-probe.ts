@@ -25,6 +25,13 @@ import { isAntigravityReadyPromptSnapshot } from './antigravity-terminal-readine
 import type { TuiAgent } from '../../shared/tui-agent'
 import { createDraftPasteReadyScanner } from '../../shared/draft-paste-ready-scanner'
 import { isVisibleReadProbeIdentityCurrent } from './visible-read-probe-identity'
+import {
+  beginVisibleReadProbeRead,
+  createVisibleReadProbeRetryState,
+  finishVisibleReadProbeRead,
+  noteVisibleReadProbeEvent,
+  shouldRetryVisibleReadProbeRead
+} from './visible-read-probe-retry'
 
 export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWithCreateAgentPromptRenderGate {
   /** One bounded look at the provider's screen for an adopted PTY whose retained
@@ -113,9 +120,7 @@ export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWith
     const codexComposerScanner =
       agent === 'codex' ? createDraftPasteReadyScanner('codex-composer-prompt') : null
     let currentCodexComposerSignal = false
-    let readInFlight = false
-    let retryRequested = false
-    let screenEpoch = 0
+    const readRetryState = createVisibleReadProbeRetryState()
     let closed = false
     let unsubscribe: (() => void) | null = null
     let cleanupTimer: NodeJS.Timeout | null = null
@@ -132,13 +137,10 @@ export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWith
       if (closed) {
         return
       }
-      if (readInFlight) {
-        retryRequested = true
+      const requestedScreenEpoch = beginVisibleReadProbeRead(readRetryState)
+      if (requestedScreenEpoch === null) {
         return
       }
-      const requestedScreenEpoch = screenEpoch
-      retryRequested = false
-      readInFlight = true
       void withTimeout(
         this.readTerminal(waiter.handle, agent === 'antigravity' ? { screen: true } : {}, {
           timeoutMs: providerTimeoutMs,
@@ -156,8 +158,7 @@ export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWith
           }
           // A PTY event during the provider snapshot makes that screen a historical frame. Do
           // not settle from it; the finalizer below coalesces the event into one fresh read.
-          if (requestedScreenEpoch !== screenEpoch || retryRequested) {
-            retryRequested = true
+          if (shouldRetryVisibleReadProbeRead(readRetryState, requestedScreenEpoch)) {
             return
           }
           const hasScreen = projection.source === 'screen'
@@ -194,9 +195,7 @@ export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWith
         })
         .catch(() => {})
         .finally(() => {
-          readInFlight = false
-          if (retryRequested && !closed) {
-            retryRequested = false
+          if (finishVisibleReadProbeRead(readRetryState) && !closed) {
             readAndClassify()
           }
         })
@@ -206,7 +205,7 @@ export class OrcaRuntimeWithStartTuiIdleVisibleReadProbe extends OrcaRuntimeWith
         if (closed) {
           return
         }
-        screenEpoch += 1
+        noteVisibleReadProbeEvent(readRetryState)
         if (codexComposerScanner.observe(data).ready) {
           currentCodexComposerSignal = true
         }

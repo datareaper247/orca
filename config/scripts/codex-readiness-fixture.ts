@@ -3,6 +3,13 @@ import { join } from 'node:path'
 import { isKnownReadyPromptBody } from '../../src/main/runtime/terminal-wait-detection'
 import { createDraftPasteReadyScanner } from '../../src/shared/draft-paste-ready-scanner'
 import { isVisibleReadProbeIdentityCurrent } from '../../src/main/runtime/visible-read-probe-identity'
+import {
+  beginVisibleReadProbeRead,
+  createVisibleReadProbeRetryState,
+  finishVisibleReadProbeRead,
+  noteVisibleReadProbeEvent,
+  shouldRetryVisibleReadProbeRead
+} from '../../src/main/runtime/visible-read-probe-retry'
 
 const readyScreen = [
   '╭────────────────────────╮',
@@ -51,6 +58,7 @@ const staleHeaderBannerlessComposerScreen = [
   'directory: ~/repo',
   '› Ask Codex to do anything'
 ]
+const bannerlessHeaderOnlyScreen = ['OpenAI Codex (v0.158)', 'model: GPT-6', 'directory: ~/repo']
 const bannerlessComposerScreen = ['› Ask Codex to do anything']
 const completedTurnScreen = [
   ...readyScreen.slice(0, 5),
@@ -157,6 +165,15 @@ assertReadiness(
   false
 )
 assertReadiness(
+  'bannerless-header-only-without-signal',
+  isKnownReadyPromptBody(
+    'OpenAI Codex\nmodel: GPT-6\ndirectory: ~/repo',
+    'codex',
+    () => bannerlessHeaderOnlyScreen
+  ),
+  false
+)
+assertReadiness(
   'bannerless-current-composer-without-signal',
   isKnownReadyPromptBody('', 'codex', () => bannerlessComposerScreen),
   false
@@ -194,6 +211,27 @@ assertReadiness(
 const scanner = createDraftPasteReadyScanner('codex-composer-prompt')
 assertReadiness('current-scanner-anchor', scanner.observe('\x1b[?2004h').ready, false)
 assertReadiness('current-scanner-composer', scanner.observe('›').ready, true)
+
+const retryState = createVisibleReadProbeRetryState()
+const firstReadEpoch = beginVisibleReadProbeRead(retryState)
+if (firstReadEpoch === null) {
+  throw new Error('scanner-during-provider-read: initial read did not start')
+}
+noteVisibleReadProbeEvent(retryState)
+assertReadiness(
+  'scanner-during-provider-read-discarded',
+  shouldRetryVisibleReadProbeRead(retryState, firstReadEpoch),
+  true
+)
+assertReadiness('scanner-during-provider-read-retry', finishVisibleReadProbeRead(retryState), true)
+const retryEpoch = beginVisibleReadProbeRead(retryState)
+assertReadiness('scanner-during-provider-read-epoch-advanced', retryEpoch === 1, true)
+assertReadiness(
+  'scanner-during-provider-read-single-flight',
+  beginVisibleReadProbeRead(retryState) === null,
+  true
+)
+assertReadiness('scanner-during-provider-read-finish', finishVisibleReadProbeRead(retryState), true)
 
 const capturedIdentity = {
   ptyId: 'pty-current',

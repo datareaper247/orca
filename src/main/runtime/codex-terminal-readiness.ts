@@ -162,6 +162,11 @@ export function classifyCodexScreenReadiness(
   if (hasExactComposer && !headerIsFramed && !currentComposerSignal) {
     return 'pending'
   }
+  if (!hasExactComposer && headerIndex !== -1 && !headerIsFramed && !currentComposerSignal) {
+    // An unframed header can be retained history. It cannot settle a wait without current
+    // composer evidence, even when the text preview contains a matching ready header.
+    return 'pending'
+  }
   if (
     findCodexScreenReadyPromptIndex(screen) !== null ||
     findCodexComposerScreenReadyPromptIndex(screen, currentComposerSignal) !== null
