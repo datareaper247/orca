@@ -13,7 +13,7 @@ import {
   findCodexComposerScreenReadyPromptIndex,
   findCodexReadyPromptIndex,
   findCodexScreenReadyPromptIndex,
-  hasCodexActiveTurn,
+  hasCodexActiveTurnInCurrentScreen,
   hasCodexLoadingHeader,
   hasCodexQuotedComposer
 } from './codex-terminal-readiness'
@@ -106,7 +106,7 @@ export function isKnownReadyPromptBody(
     return (
       codexScreenBlocked === null &&
       !hasCodexQuotedComposer(codexScreen) &&
-      !hasCodexActiveTurn(codexScreen)
+      !hasCodexActiveTurnInCurrentScreen(codexScreen)
     )
   }
   // Why the agent gate: another agent's screen can merely mention "OpenAI Codex".
@@ -126,7 +126,7 @@ export function isKnownReadyPromptBody(
     screenLines !== null &&
     codexScreenBlocked === null &&
     !hasCodexQuotedComposer(screen) &&
-    !hasCodexActiveTurn(screen) &&
+    !hasCodexActiveTurnInCurrentScreen(screen) &&
     !hasCodexLoadingHeader(screen) &&
     isReadyPromptUnblocked(screen, screenReadyIndex)
   )

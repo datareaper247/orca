@@ -41,6 +41,13 @@ const completedTurnScreen = [
   '• Working (completed earlier)',
   '› Ask Codex to do anything'
 ]
+const historicalActiveTurnScreen = [
+  ...readyScreen.slice(0, 5),
+  '› Earlier request',
+  '• Working (12s • esc to interrupt)',
+  '› Current request',
+  '› Ask Codex to do anything'
+]
 const otherAgentScreen = [...readyScreen.slice(0, 5), '• Running tests']
 
 function assertReadiness(label: string, actual: boolean, expected: boolean): void {
@@ -112,6 +119,11 @@ assertReadiness(
 assertReadiness(
   'completed-turn-history',
   isKnownReadyPromptBody('', 'codex', () => completedTurnScreen),
+  true
+)
+assertReadiness(
+  'historical-active-turn',
+  isKnownReadyPromptBody('', 'codex', () => historicalActiveTurnScreen),
   true
 )
 assertReadiness(

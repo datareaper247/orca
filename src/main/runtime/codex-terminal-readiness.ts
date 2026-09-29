@@ -110,6 +110,14 @@ export function hasCodexActiveTurn(normalized: string): boolean {
     .some((line) => CODEX_ACTIVE_TURN_RE.test(line) && !CODEX_COMPLETED_TURN_RE.test(line))
 }
 
+export function hasCodexActiveTurnInCurrentScreen(normalized: string): boolean {
+  const lines = normalized.split('\n')
+  const composerLineIndex = findCodexComposerLineIndex(lines)
+  return composerLineIndex === -1
+    ? hasCodexActiveTurn(normalized)
+    : hasCodexActiveTurn(codexTurnText(lines, composerLineIndex))
+}
+
 export function hasCodexQuotedComposer(normalized: string): boolean {
   const lines = normalized.split('\n')
   const composerLineIndex = findCodexComposerLineIndex(lines)
