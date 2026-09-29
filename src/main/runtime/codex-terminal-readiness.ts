@@ -6,10 +6,6 @@ const CODEX_COMPLETED_TURN_RE = /\b(?:completed|done|finished|earlier)\b/i
 
 export type CodexScreenReadiness = 'ready' | 'blocked' | 'pending' | 'unknown'
 
-export function hasCodexScreenIdentity(screenLines: readonly string[]): boolean {
-  return screenLines.some((line) => line.toLowerCase().includes('openai codex'))
-}
-
 export function isCodexComposerLine(line: string): boolean {
   const withoutBorders = line
     .replace(/^\s*[│|]\s?/, '')

@@ -9,11 +9,7 @@ import type { RuntimeTerminalWaitBlockedReason } from '../../shared/runtime-type
 import type { TuiAgent } from '../../shared/tui-agent'
 import { findAntigravityReadyPromptIndex } from './antigravity-terminal-readiness'
 import { findCursorApprovalPromptIndex } from './terminal-wait-cursor-approval'
-import {
-  classifyCodexScreenReadiness,
-  findCodexReadyPromptIndex,
-  hasCodexScreenIdentity
-} from './codex-terminal-readiness'
+import { classifyCodexScreenReadiness, findCodexReadyPromptIndex } from './codex-terminal-readiness'
 import { startOfLastNonBlankLines } from './terminal-wait-tail-window'
 
 const EXPLICIT_IDLE_TITLE_RE = /(^|\s)(ready|idle|done)(\s|$|[.!?])/i
@@ -101,10 +97,10 @@ export function isKnownReadyPromptBody(
     if (agent !== 'codex' || codexScreenLines === null) {
       return true
     }
-    // A retained ready tail cannot override an unrelated or empty current grid. A garbled
-    // repaint may still preserve the provider identity, so keep the historical compatibility
-    // fallback only for a screen that visibly belongs to Codex.
-    return codexScreenReadiness === 'unknown' && hasCodexScreenIdentity(codexScreenLines)
+    // A current provider read can be a garbled 80x24 repaint with no Codex identity cells left.
+    // The visible-read probe's epoch/retry fence makes this text a same-frame compatibility
+    // fallback; identifiable unframed headers remain pending above and cannot reach this branch.
+    return codexScreenReadiness === 'unknown'
   }
   // Why the agent gate: another agent's screen can merely mention "OpenAI Codex".
   if (agent !== null && agent !== 'codex') {

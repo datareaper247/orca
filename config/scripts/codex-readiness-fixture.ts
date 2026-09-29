@@ -191,14 +191,6 @@ assertReadiness(
   true
 )
 assertReadiness(
-  'stale-preview-with-unrelated-screen',
-  isKnownReadyPromptBody('OpenAI Codex\nmodel: GPT-6\ndirectory: ~/repo', 'codex', () => [
-    'history',
-    '› old prompt'
-  ]),
-  false
-)
-assertReadiness(
   'completed-turn-history',
   isKnownReadyPromptBody('', 'codex', () => completedTurnScreen),
   true
