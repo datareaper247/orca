@@ -9,7 +9,11 @@ import type { RuntimeTerminalWaitBlockedReason } from '../../shared/runtime-type
 import type { TuiAgent } from '../../shared/tui-agent'
 import { findAntigravityReadyPromptIndex } from './antigravity-terminal-readiness'
 import { findCursorApprovalPromptIndex } from './terminal-wait-cursor-approval'
-import { classifyCodexScreenReadiness, findCodexReadyPromptIndex } from './codex-terminal-readiness'
+import {
+  classifyCodexScreenReadiness,
+  findCodexReadyPromptIndex,
+  hasCodexComposerEvidence
+} from './codex-terminal-readiness'
 import { startOfLastNonBlankLines } from './terminal-wait-tail-window'
 
 const EXPLICIT_IDLE_TITLE_RE = /(^|\s)(ready|idle|done)(\s|$|[.!?])/i
@@ -99,8 +103,9 @@ export function isKnownReadyPromptBody(
     }
     // A current provider read can be a garbled 80x24 repaint with no Codex identity cells left.
     // The visible-read probe's epoch/retry fence makes this text a same-frame compatibility
-    // fallback; identifiable unframed headers remain pending above and cannot reach this branch.
-    return codexScreenReadiness === 'unknown'
+    // fallback, but only a composer-shaped current screen can authorize it. Identifiable
+    // unframed headers remain pending above and cannot reach this branch.
+    return codexScreenReadiness === 'unknown' && hasCodexComposerEvidence(codexScreenLines)
   }
   // Why the agent gate: another agent's screen can merely mention "OpenAI Codex".
   if (agent !== null && agent !== 'codex') {

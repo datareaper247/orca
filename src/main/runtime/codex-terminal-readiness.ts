@@ -1,5 +1,6 @@
 const CODEX_HEADER_LOADING_RE = /(?:model|directory):\s+loading/
 const CODEX_COMPOSER_TEXT_RE = /(?:ask codex to do anything|ask a follow-up question)/i
+const CODEX_GARBLED_COMPOSER_RE = /^\s*[›>]\s*.*(?:anything|shortcuts)\b/i
 const CODEX_ACTIVE_TURN_RE =
   /^\s*[│|]?\s*[•✻*]\s*(?:working|thinking|generating|planning|executing|running)\b.*(?:esc to interrupt|\(\s*\d+(?:\.\d+)?\s*(?:ms|s|m)\b)/i
 const CODEX_COMPLETED_TURN_RE = /\b(?:completed|done|finished|earlier)\b/i
@@ -12,6 +13,17 @@ export function isCodexComposerLine(line: string): boolean {
     .replace(/\s*[│|]\s*$/, '')
     .trim()
   return /^›\s*(?:ask codex to do anything|ask a follow-up question)\s*$/i.test(withoutBorders)
+}
+
+/**
+ * The 80x24 projection can lose the Codex banner and splice the composer into adjacent cells.
+ * Keep only a strong composer-shaped fragment as fallback evidence; a generic historical `›`
+ * transcript row must not authorize retained ready text.
+ */
+export function hasCodexComposerEvidence(screenLines: readonly string[]): boolean {
+  return screenLines.some(
+    (line) => isCodexComposerLine(line) || CODEX_GARBLED_COMPOSER_RE.test(line)
+  )
 }
 
 export function findCodexComposerLineIndex(lines: readonly string[]): number {
