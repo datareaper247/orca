@@ -179,7 +179,7 @@ assertReadiness(
 assertReadiness(
   'historical-active-turn',
   isKnownReadyPromptBody('', 'codex', () => historicalActiveTurnScreen),
-  false
+  true
 )
 assertReadiness(
   'other-agent-running-text',

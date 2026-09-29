@@ -108,9 +108,15 @@ export function hasCodexActiveTurn(normalized: string): boolean {
 export function hasCodexActiveTurnInCurrentScreen(normalized: string): boolean {
   const lines = normalized.split('\n')
   const composerLineIndex = findCodexComposerLineIndex(lines)
-  return hasCodexActiveTurn(
-    composerLineIndex === -1 ? normalized : lines.slice(0, composerLineIndex).join('\n')
+  if (composerLineIndex === -1) {
+    return hasCodexActiveTurn(normalized)
+  }
+  const previousPromptIndex = lines.findLastIndex(
+    (line, index) => index < composerLineIndex && /^\s*[›>]/.test(line)
   )
+  // Only the turn immediately preceding the current composer can be in flight. Older turns stay
+  // visible in the transcript and must not hold an otherwise idle current prompt pending.
+  return hasCodexActiveTurn(lines.slice(previousPromptIndex + 1, composerLineIndex).join('\n'))
 }
 
 export function hasCodexQuotedComposer(normalized: string): boolean {
